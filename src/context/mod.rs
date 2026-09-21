@@ -344,7 +344,7 @@ impl<'a> Context<'a> {
                 // Load all the configuration as it affects aspects of the
                 // `git_status` and `git_metrics` modules.
                 let config = gix::open::permissions::Config {
-                    git_binary: true,
+                    git_binary: git_binary_is_usable(),
                     system: true,
                     git: true,
                     user: true,
@@ -517,6 +517,28 @@ impl<'a> Context<'a> {
             .iter()
             .any(|s| self.get_env_os(s).is_some())
     }
+}
+
+fn git_binary_is_usable() -> bool {
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        static USABLE: OnceLock<bool> = OnceLock::new();
+        *USABLE.get_or_init(|| {
+            let output = create_command("git")
+                .ok()
+                .and_then(|mut command| exec_timeout(&mut command, Duration::from_secs(1)));
+            has_git_version(output)
+        })
+    }
+}
+
+fn has_git_version(output: Option<CommandOutput>) -> bool {
+    output.is_some_and(|output| output.stdout.starts_with("git version "))
 }
 
 impl Default for Context<'_> {
@@ -982,6 +1004,19 @@ mod tests {
     use super::*;
     use crate::test::default_context;
     use std::io;
+
+    #[test]
+    fn accepts_git_version_output() {
+        assert!(has_git_version(Some(CommandOutput {
+            stdout: "git version 2.51.0".into(),
+            stderr: String::new(),
+        })));
+        assert!(!has_git_version(Some(CommandOutput {
+            stdout: String::new(),
+            stderr: "xcode-select: note: no developer tools were found".into(),
+        })));
+        assert!(!has_git_version(None));
+    }
 
     fn testdir(paths: &[&str]) -> Result<tempfile::TempDir, std::io::Error> {
         let dir = tempfile::tempdir()?;
